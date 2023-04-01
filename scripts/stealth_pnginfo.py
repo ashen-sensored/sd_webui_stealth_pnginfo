@@ -6,7 +6,7 @@ from PIL import Image
 from gradio import media_data, processing_utils, utils
 import PIL
 import warnings
-
+LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
 def add_stealth_pnginfo(params:ImageSaveParams):
     stealth_pnginfo_enabled = shared.opts.data.get("stealth_pnginfo", True)
     if not stealth_pnginfo_enabled:
@@ -215,6 +215,29 @@ def on_after_component_change_pnginfo_image_mode(component, **_kwargs):
         component.upload(clear_alpha, component, component)
         component.preprocess = custom_image_preprocess.__get__(component, gr.Image)
 
+original_resize_image = images.resize_image
+
+def stealth_resize_image(resize_mode, im, width, height, upscaler_name=None):
+    """
+    Resizes an image with the specified resize_mode, width, and height.
+
+    Args:
+        resize_mode: The mode to use when resizing the image.
+            0: Resize the image to the specified width and height.
+            1: Resize the image to fill the specified width and height, maintaining the aspect ratio, and then center the image within the dimensions, cropping the excess.
+            2: Resize the image to fit within the specified width and height, maintaining the aspect ratio, and then center the image within the dimensions, filling empty with data from image.
+        im: The image to resize.
+        width: The width to resize the image to.
+        height: The height to resize the image to.
+        upscaler_name: The name of the upscaler to use. If not provided, defaults to opts.upscaler_for_img2img.
+    """
+    # convert to RGB
+    if im.mode == 'RGBA':
+        im = im.convert('RGB')
+
+    return original_resize_image(resize_mode, im, width, height, upscaler_name)
+
+images.resize_image = stealth_resize_image
 
 
 script_callbacks.on_ui_settings(on_ui_settings)
