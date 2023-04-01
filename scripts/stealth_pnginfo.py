@@ -108,6 +108,7 @@ def read_info_from_image_stealth(image):
             decoded_data = bytearray(int(binary_data[i:i + 8], 2) for i in range(0, len(binary_data), 8)).decode('utf-8',errors='ignore')
 
             geninfo = decoded_data
+        image.convert('RGB')
 
     return geninfo, items
 
