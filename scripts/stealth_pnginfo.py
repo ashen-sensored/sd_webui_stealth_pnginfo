@@ -59,6 +59,8 @@ original_read_info_from_image = images.read_info_from_image
 def read_info_from_image_stealth(image):
     geninfo, items = original_read_info_from_image(image)
 
+    if image.mode != 'RGBA':
+        return geninfo, items
     # trying to read stealth pnginfo
     width, height = image.size
     pixels = image.load()
