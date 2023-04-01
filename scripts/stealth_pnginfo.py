@@ -125,6 +125,9 @@ def send_rgb_image_and_dimension(x):
             img = img.convert('RGB')
     else:
         img = generation_parameters_copypaste.image_from_url_text(x)
+        if img.mode == 'RGBA':
+            img = img.convert('RGB')
+
 
     if shared.opts.send_size and isinstance(img, Image.Image):
         w = img.width
