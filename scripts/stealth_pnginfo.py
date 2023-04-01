@@ -80,6 +80,7 @@ def read_info_from_image_stealth(image):
                             buffer = ''
                             index = 0
                         else:
+                            read_end = True
                             break
                 elif reading_param_len:
                     if index == 32:
@@ -94,6 +95,8 @@ def read_info_from_image_stealth(image):
                         read_end = True
                         break
                 else:
+                    # impossible
+                    read_end = True
                     break
 
                 index += 1
