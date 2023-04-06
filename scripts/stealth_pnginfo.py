@@ -13,11 +13,18 @@ def add_stealth_pnginfo(params:ImageSaveParams):
         return
     if not params.filename.endswith('.png') or params.pnginfo is None:
         return
+    if 'parameters' not in params.pnginfo:
+        return
+    str_parameters = params.pnginfo['parameters']
     source_img = params.image
     width, height = source_img.size
     source_img.putalpha(255)
     pixels = params.image.load()
-    str_parameters = params.pnginfo['parameters']
+    # stealth_pnginfo_prompt_override = shared.opts.data.get("stealth_pnginfo_prompt_override", None)
+    # if stealth_pnginfo_prompt_override != "":
+    #     last_replace_idx = str_parameters.index("Negative prompt")
+    #     str_parameters = stealth_pnginfo_prompt_override + str_parameters[last_replace_idx:]
+    #     pass
     # prepend signature
     signature_str = 'stealth_pnginfo'
 
@@ -147,6 +154,8 @@ def on_ui_settings():
     section = ('stealth_pnginfo', "Stealth PNGinfo")
     shared.opts.add_option("stealth_pnginfo", shared.OptionInfo(
         True, "Save Stealth PNGinfo", gr.Checkbox, {"interactive": True}, section=section))
+    shared.opts.add_option("stealth_pnginfo_prompt_override", shared.OptionInfo(
+        "", "Stealth PNGinfo Prompt Override", section=section))
 
 
 def custom_image_preprocess(
