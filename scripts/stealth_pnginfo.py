@@ -6,75 +6,77 @@ from PIL import Image
 from gradio import media_data, processing_utils, utils
 import PIL
 import warnings
-LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
-def add_stealth_pnginfo(params:ImageSaveParams):
+import gzip
+
+
+def add_stealth_pnginfo(params: ImageSaveParams):
     stealth_pnginfo_enabled = shared.opts.data.get("stealth_pnginfo", True)
+    stealth_pnginfo_mode = shared.opts.data.get('stealth_pnginfo_mode', 'alpha')
+    stealth_pnginfo_compressed = shared.opts.data.get("stealth_pnginfo_compression", True)
     if not stealth_pnginfo_enabled:
         return
     if not params.filename.endswith('.png') or params.pnginfo is None:
         return
     if 'parameters' not in params.pnginfo:
         return
-    str_parameters = params.pnginfo['parameters']
-    source_img = params.image
-    width, height = source_img.size
-    source_img.putalpha(255)
+    add_data(params, stealth_pnginfo_mode, stealth_pnginfo_compressed)
+
+
+def prepare_data(params, mode='alpha', compressed=False):
+    signature = f"stealth_{'png' if mode == 'alpha' else 'rgb'}{'info' if not compressed else 'comp'}"
+    binary_signature = ''.join(format(byte, '08b') for byte in signature.encode('utf-8'))
+    param = params.encode('utf-8') if not compressed else gzip.compress(bytes(params, 'utf-8'))
+    binary_param = ''.join(format(byte, '08b') for byte in param)
+    binary_param_len = format(len(binary_param), '032b')
+    return binary_signature + binary_param_len + binary_param
+
+
+def add_data(params, mode='alpha', compressed=False):
+    binary_data = prepare_data(params.pnginfo['parameters'], mode, compressed)
+    if mode == 'alpha':
+        params.image.putalpha(255)
+    width, height = params.image.size
     pixels = params.image.load()
-    # stealth_pnginfo_prompt_override = shared.opts.data.get("stealth_pnginfo_prompt_override", None)
-    # if stealth_pnginfo_prompt_override != "":
-    #     last_replace_idx = str_parameters.index("Negative prompt")
-    #     str_parameters = stealth_pnginfo_prompt_override + str_parameters[last_replace_idx:]
-    #     pass
-    # prepend signature
-    signature_str = 'stealth_pnginfo'
-
-    binary_signature = ''.join(format(byte, '08b') for byte in signature_str.encode('utf-8'))
-
-
-
-    binary_param = ''.join(format(byte, '08b') for byte in str_parameters.encode('utf-8'))
-
-    # prepend length of parameters, padded to 32 digits
-    param_len = len(binary_param)
-    binary_param_len = format(param_len, '032b')
-
-    binary_data = binary_signature + binary_param_len + binary_param
     index = 0
     for x in range(width):
         for y in range(height):
-            if index < len(binary_data):
-                r, g, b, a = pixels[x, y]
-
-                # Modify the alpha value's least significant bit
+            if index >= len(binary_data):
+                break
+            values = pixels[x, y]
+            if mode == 'alpha':
+                r, g, b, a = values
+            else:
+                r, g, b = values
+            if mode == 'alpha':
                 a = (a & ~1) | int(binary_data[index])
-
-                pixels[x, y] = (r, g, b, a)
                 index += 1
             else:
-                break
+                r = (r & ~1) | int(binary_data[index])
+                if index + 1 < len(binary_data):
+                    g = (g & ~1) | int(binary_data[index + 1])
+                if index + 2 < len(binary_data):
+                    b = (b & ~1) | int(binary_data[index + 2])
+                index += 3
+            pixels[x, y] = (r, g, b, a) if mode == 'alpha' else (r, g, b)
 
-
-
-    # for k, v in params.pnginfo.items():
-    #     pnginfo_data.add_text(k, str(v))
-
-
-    pass
-
-original_read_info_from_image = images.read_info_from_image
 
 def read_info_from_image_stealth(image):
     geninfo, items = original_read_info_from_image(image)
-
-    if image.mode != 'RGBA':
-        return geninfo, items
+    possible_sigs = {'stealth_pnginfo', 'stealth_pngcomp', 'stealth_rgbinfo', 'stealth_rgbcomp'}
+    # if image.mode != 'RGBA':
+    #     return geninfo, items
     # trying to read stealth pnginfo
     width, height = image.size
     pixels = image.load()
 
+    has_alpha = True if image.mode == 'RGBA' else False
+    mode = None
+    compressed = False
     binary_data = ''
-    buffer = ''
-    index = 0
+    buffer_a = ''
+    buffer_rgb = ''
+    index_a = 0
+    index_rgb = 0
     sig_confirmed = False
     confirming_signature = True
     reading_param_len = False
@@ -82,50 +84,93 @@ def read_info_from_image_stealth(image):
     read_end = False
     for x in range(width):
         for y in range(height):
-            r, g, b, a = pixels[x, y]
-            buffer += str(a & 1)
-            pixels[x, y] = (r, g, b, 0)
+            if has_alpha:
+                r, g, b, a = pixels[x, y]
+                buffer_a += str(a & 1)
+                index_a += 1
+            else:
+                r, g, b = pixels[x, y]
+            buffer_rgb += str(r & 1)
+            buffer_rgb += str(g & 1)
+            buffer_rgb += str(b & 1)
+            index_rgb += 3
             if confirming_signature:
-                if index == len('stealth_pnginfo') * 8 - 1:
-                    if buffer == ''.join(format(byte, '08b') for byte in 'stealth_pnginfo'.encode('utf-8')):
+                if index_a == len('stealth_pnginfo') * 8:
+                    decoded_sig = bytearray(int(buffer_a[i:i + 8], 2) for i in
+                                            range(0, len(buffer_a), 8)).decode('utf-8', errors='ignore')
+                    if decoded_sig in {'stealth_pnginfo', 'stealth_pngcomp'}:
                         confirming_signature = False
                         sig_confirmed = True
                         reading_param_len = True
-                        buffer = ''
-                        index = 0
+                        mode = 'alpha'
+                        if decoded_sig == 'stealth_pngcomp':
+                            compressed = True
+                        buffer_a = ''
+                        index_a = 0
                     else:
                         read_end = True
                         break
+                elif index_rgb == len('stealth_pnginfo') * 8:
+                    decoded_sig = bytearray(int(buffer_rgb[i:i + 8], 2) for i in
+                                            range(0, len(buffer_rgb), 8)).decode('utf-8', errors='ignore')
+                    if decoded_sig in {'stealth_rgbinfo', 'stealth_rgbcomp'}:
+                        confirming_signature = False
+                        sig_confirmed = True
+                        reading_param_len = True
+                        mode = 'rgb'
+                        if decoded_sig == 'stealth_rgbcomp':
+                            compressed = True
+                        buffer_rgb = ''
+                        index_rgb = 0
             elif reading_param_len:
-                if index == 32:
-                    param_len = int(buffer, 2)
-                    reading_param_len = False
-                    reading_param = True
-                    buffer = ''
-                    index = 0
+                if mode == 'alpha':
+                    if index_a == 32:
+                        param_len = int(buffer_a, 2)
+                        reading_param_len = False
+                        reading_param = True
+                        buffer_a = ''
+                        index_a = 0
+                else:
+                    if index_rgb == 33:
+                        pop = buffer_rgb[-1]
+                        buffer_rgb = buffer_rgb[:-1]
+                        param_len = int(buffer_rgb, 2)
+                        reading_param_len = False
+                        reading_param = True
+                        buffer_rgb = pop
+                        index_rgb = 1
             elif reading_param:
-                if index == param_len:
-                    binary_data = buffer
-                    read_end = True
-                    break
+                if mode == 'alpha':
+                    if index_a == param_len:
+                        binary_data = buffer_a
+                        read_end = True
+                        break
+                else:
+                    if index_rgb >= param_len:
+                        diff = param_len - index_rgb
+                        if diff < 0:
+                            buffer_rgb = buffer_rgb[:diff]
+                        binary_data = buffer_rgb
+                        read_end = True
+                        break
             else:
                 # impossible
                 read_end = True
                 break
-
-            index += 1
         if read_end:
             break
-
+    print(f"compressed = {compressed}, mode = {mode}")
     if sig_confirmed and binary_data != '':
         # Convert binary string to UTF-8 encoded text
-        decoded_data = bytearray(int(binary_data[i:i + 8], 2) for i in range(0, len(binary_data), 8)).decode('utf-8',errors='ignore')
-
+        byte_data = bytearray(int(binary_data[i:i + 8], 2) for i in range(0, len(binary_data), 8))
+        if compressed:
+            decoded_data = gzip.decompress(bytes(byte_data)).decode('utf-8')
+        else:
+            decoded_data = byte_data.decode('utf-8', errors='ignore')
         geninfo = decoded_data
-
+        print(geninfo)
     return geninfo, items
 
-images.read_info_from_image = read_info_from_image_stealth
 
 def send_rgb_image_and_dimension(x):
     if isinstance(x, Image.Image):
@@ -137,7 +182,6 @@ def send_rgb_image_and_dimension(x):
         if img.mode == 'RGBA':
             img = img.convert('RGB')
 
-
     if shared.opts.send_size and isinstance(img, Image.Image):
         w = img.width
         h = img.height
@@ -147,20 +191,22 @@ def send_rgb_image_and_dimension(x):
 
     return img, w, h
 
-generation_parameters_copypaste.send_image_and_dimensions = send_rgb_image_and_dimension
-
 
 def on_ui_settings():
     section = ('stealth_pnginfo', "Stealth PNGinfo")
     shared.opts.add_option("stealth_pnginfo", shared.OptionInfo(
         True, "Save Stealth PNGinfo", gr.Checkbox, {"interactive": True}, section=section))
     shared.opts.add_option("stealth_pnginfo_prompt_override", shared.OptionInfo(
-        "", "Stealth PNGinfo Prompt Override", section=section))
+        "", "Stealth PNGinfo Prompt Override", section=section))  # I don't think this does anything,
+    # it is not referenced anywhere else
+    shared.opts.add_option("stealth_pnginfo_mode", shared.OptionInfo(
+        "alpha", "Stealth PNGinfo mode", gr.Dropdown, {"choices": ["alpha", "rgb"], "interactive": True},
+        section=section))
+    shared.opts.add_option("stealth_pnginfo_compression", shared.OptionInfo(
+        True, "Stealth PNGinfo compression", gr.Checkbox, {"interactive": True}, section=section))
 
 
-def custom_image_preprocess(
-        self, x
-    ):
+def custom_image_preprocess(self, x):
     if x is None:
         return x
 
@@ -168,7 +214,6 @@ def custom_image_preprocess(
     if self.tool == "sketch" and self.source in ["upload", "webcam"]:
         assert isinstance(x, dict)
         x, mask = x["image"], x["mask"]
-
 
     assert isinstance(x, str)
     im = processing_utils.decode_base64_to_image(x)
@@ -191,13 +236,14 @@ def custom_image_preprocess(
         if mask is not None:
             mask_im = processing_utils.decode_base64_to_image(mask)
 
-
         return {
             "image": self._format_image(im),
             "mask": self._format_image(mask_im),
         }
 
     return self._format_image(im)
+
+
 def on_after_component_change_pnginfo_image_mode(component, **_kwargs):
     if type(component) is gr.State:
         return
@@ -212,6 +258,7 @@ def on_after_component_change_pnginfo_image_mode(component, **_kwargs):
             for y in range(height):
                 r, g, b, a = pixels[x, y]
                 pixels[x, y] = (r, g, b, 0)
+
     def clear_alpha(param):
         print('clear_alpha called')
         output_image = param['image'].convert('RGB')
@@ -220,11 +267,9 @@ def on_after_component_change_pnginfo_image_mode(component, **_kwargs):
         # return input
 
     if type(component) is gr.Image and component.elem_id == 'img2maskimg':
-
         component.upload(clear_alpha, component, component)
         component.preprocess = custom_image_preprocess.__get__(component, gr.Image)
 
-original_resize_image = images.resize_image
 
 def stealth_resize_image(resize_mode, im, width, height, upscaler_name=None):
     """
@@ -246,8 +291,13 @@ def stealth_resize_image(resize_mode, im, width, height, upscaler_name=None):
 
     return original_resize_image(resize_mode, im, width, height, upscaler_name)
 
-images.resize_image = stealth_resize_image
 
+LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
+original_read_info_from_image = images.read_info_from_image
+images.read_info_from_image = read_info_from_image_stealth
+generation_parameters_copypaste.send_image_and_dimensions = send_rgb_image_and_dimension
+original_resize_image = images.resize_image
+images.resize_image = stealth_resize_image
 
 script_callbacks.on_ui_settings(on_ui_settings)
 script_callbacks.on_before_image_saved(add_stealth_pnginfo)
