@@ -11,7 +11,7 @@ import gzip
 
 def add_stealth_pnginfo(params: ImageSaveParams):
     stealth_pnginfo_enabled = shared.opts.data.get("stealth_pnginfo", True)
-    stealth_pnginfo_mode = shared.opts.data.get('stealth_pnginfo_mode', 'alpha')
+    stealth_pnginfo_mode = shared.opts.data.get('stealth_pnginfo_mode', 'rgb')
     stealth_pnginfo_compressed = shared.opts.data.get("stealth_pnginfo_compression", True)
     if not stealth_pnginfo_enabled:
         return
@@ -38,9 +38,11 @@ def add_data(params, mode='alpha', compressed=False):
     width, height = params.image.size
     pixels = params.image.load()
     index = 0
+    end_write = False
     for x in range(width):
         for y in range(height):
             if index >= len(binary_data):
+                end_write = True
                 break
             values = pixels[x, y]
             if mode == 'alpha':
@@ -58,13 +60,14 @@ def add_data(params, mode='alpha', compressed=False):
                     b = (b & ~1) | int(binary_data[index + 2])
                 index += 3
             pixels[x, y] = (r, g, b, a) if mode == 'alpha' else (r, g, b)
+        if end_write:
+            break
 
 
 def read_info_from_image_stealth(image):
     geninfo, items = original_read_info_from_image(image)
-    possible_sigs = {'stealth_pnginfo', 'stealth_pngcomp', 'stealth_rgbinfo', 'stealth_rgbcomp'}
-    # if image.mode != 'RGBA':
-    #     return geninfo, items
+    # possible_sigs = {'stealth_pnginfo', 'stealth_pngcomp', 'stealth_rgbinfo', 'stealth_rgbcomp'}
+    
     # trying to read stealth pnginfo
     width, height = image.size
     pixels = image.load()
@@ -159,16 +162,17 @@ def read_info_from_image_stealth(image):
                 break
         if read_end:
             break
-    print(f"compressed = {compressed}, mode = {mode}")
     if sig_confirmed and binary_data != '':
         # Convert binary string to UTF-8 encoded text
         byte_data = bytearray(int(binary_data[i:i + 8], 2) for i in range(0, len(binary_data), 8))
-        if compressed:
-            decoded_data = gzip.decompress(bytes(byte_data)).decode('utf-8')
-        else:
-            decoded_data = byte_data.decode('utf-8', errors='ignore')
-        geninfo = decoded_data
-        print(geninfo)
+        try:
+            if compressed:
+                decoded_data = gzip.decompress(bytes(byte_data)).decode('utf-8')
+            else:
+                decoded_data = byte_data.decode('utf-8', errors='ignore')
+            geninfo = decoded_data
+        except:
+            pass
     return geninfo, items
 
 
@@ -200,7 +204,7 @@ def on_ui_settings():
         "", "Stealth PNGinfo Prompt Override", section=section))  # I don't think this does anything,
     # it is not referenced anywhere else
     shared.opts.add_option("stealth_pnginfo_mode", shared.OptionInfo(
-        "alpha", "Stealth PNGinfo mode", gr.Dropdown, {"choices": ["alpha", "rgb"], "interactive": True},
+        "rgb", "Stealth PNGinfo mode", gr.Dropdown, {"choices": ["alpha", "rgb"], "interactive": True},
         section=section))
     shared.opts.add_option("stealth_pnginfo_compression", shared.OptionInfo(
         True, "Stealth PNGinfo compression", gr.Checkbox, {"interactive": True}, section=section))
