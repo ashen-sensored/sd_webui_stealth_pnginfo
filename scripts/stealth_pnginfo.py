@@ -11,7 +11,7 @@ import gzip
 
 def add_stealth_pnginfo(params: ImageSaveParams):
     stealth_pnginfo_enabled = shared.opts.data.get("stealth_pnginfo", True)
-    stealth_pnginfo_mode = shared.opts.data.get('stealth_pnginfo_mode', 'rgb')
+    stealth_pnginfo_mode = shared.opts.data.get('stealth_pnginfo_mode', 'alpha')
     stealth_pnginfo_compressed = shared.opts.data.get("stealth_pnginfo_compression", True)
     if not stealth_pnginfo_enabled:
         return
@@ -67,7 +67,11 @@ def add_data(params, mode='alpha', compressed=False):
 def read_info_from_image_stealth(image):
     geninfo, items = original_read_info_from_image(image)
     # possible_sigs = {'stealth_pnginfo', 'stealth_pngcomp', 'stealth_rgbinfo', 'stealth_rgbcomp'}
-    
+
+    # respecting original pnginfo
+    if geninfo is not None:
+        return geninfo, items
+
     # trying to read stealth pnginfo
     width, height = image.size
     pixels = image.load()
@@ -200,11 +204,8 @@ def on_ui_settings():
     section = ('stealth_pnginfo', "Stealth PNGinfo")
     shared.opts.add_option("stealth_pnginfo", shared.OptionInfo(
         True, "Save Stealth PNGinfo", gr.Checkbox, {"interactive": True}, section=section))
-    shared.opts.add_option("stealth_pnginfo_prompt_override", shared.OptionInfo(
-        "", "Stealth PNGinfo Prompt Override", section=section))  # I don't think this does anything,
-    # it is not referenced anywhere else
     shared.opts.add_option("stealth_pnginfo_mode", shared.OptionInfo(
-        "rgb", "Stealth PNGinfo mode", gr.Dropdown, {"choices": ["alpha", "rgb"], "interactive": True},
+        "alpha", "Stealth PNGinfo mode", gr.Dropdown, {"choices": ["alpha", "rgb"], "interactive": True},
         section=section))
     shared.opts.add_option("stealth_pnginfo_compression", shared.OptionInfo(
         True, "Stealth PNGinfo compression", gr.Checkbox, {"interactive": True}, section=section))
