@@ -3,7 +3,7 @@ from modules.script_callbacks import ImageSaveParams
 import gradio as gr
 from modules import images
 from PIL import Image
-from gradio import media_data, processing_utils, utils
+from gradio import processing_utils
 import PIL
 import warnings
 import gzip
