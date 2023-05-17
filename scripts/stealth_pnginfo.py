@@ -64,6 +64,9 @@ def add_data(params, mode='alpha', compressed=False):
             break
 
 
+original_read_info_from_image = images.read_info_from_image
+
+
 def read_info_from_image_stealth(image):
     geninfo, items = original_read_info_from_image(image)
     # possible_sigs = {'stealth_pnginfo', 'stealth_pngcomp', 'stealth_rgbinfo', 'stealth_rgbcomp'}
@@ -255,25 +258,20 @@ def on_after_component_change_pnginfo_image_mode(component, **_kwargs):
     if type(component) is gr.Image and component.elem_id == 'pnginfo_image':
         component.image_mode = 'RGBA'
 
-    def set_alpha_channel_to_zero(image):
-        width, height = image.size
-        pixels = image.load()
 
-        for x in range(width):
-            for y in range(height):
-                r, g, b, a = pixels[x, y]
-                pixels[x, y] = (r, g, b, 0)
 
     def clear_alpha(param):
-        print('clear_alpha called')
         output_image = param['image'].convert('RGB')
         return output_image
-        # set_alpha_channel_to_zero(input)
-        # return input
+
 
     if type(component) is gr.Image and component.elem_id == 'img2maskimg':
+        # pass
         component.upload(clear_alpha, component, component)
         component.preprocess = custom_image_preprocess.__get__(component, gr.Image)
+
+
+original_resize_image = images.resize_image
 
 
 def stealth_resize_image(resize_mode, im, width, height, upscaler_name=None):
@@ -297,11 +295,11 @@ def stealth_resize_image(resize_mode, im, width, height, upscaler_name=None):
     return original_resize_image(resize_mode, im, width, height, upscaler_name)
 
 
-LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS)
-original_read_info_from_image = images.read_info_from_image
+
 images.read_info_from_image = read_info_from_image_stealth
+
 generation_parameters_copypaste.send_image_and_dimensions = send_rgb_image_and_dimension
-original_resize_image = images.resize_image
+
 images.resize_image = stealth_resize_image
 
 script_callbacks.on_ui_settings(on_ui_settings)
